@@ -1,59 +1,93 @@
-const express = require('express');
-const path = require('path');
+const http = require('http');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
-const app = express();
 const PORT = process.env.PORT || 8080;
-const distPath = path.join(__dirname, 'dist', 'emitta-frontend-angular', 'browser');
+const DIST = path.join(__dirname, 'dist', 'emitta-frontend-angular', 'browser');
 
-// Proxy transparente para /api -> https://api-emitta.nexorf.dev/api
-// Elimina los encabezados origin y referer para que el servidor Spring Boot
-// no rechace la petición con 403 "Invalid CORS request".
-app.use('/api', (req, res) => {
-  const targetHost = 'api-emitta.nexorf.dev';
-  const targetPath = '/api' + req.url;
+const MIME_TYPES = {
+  '.html': 'text/html; charset=UTF-8',
+  '.js': 'text/javascript; charset=UTF-8',
+  '.css': 'text/css; charset=UTF-8',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.webmanifest': 'application/manifest+json'
+};
 
-  const headers = { ...req.headers };
-  headers['host'] = targetHost;
-  delete headers['origin'];
-  delete headers['referer'];
+const server = http.createServer((req, res) => {
+  // 1. Manejo de Preflight CORS (OPTIONS)
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': '*'
+    });
+    res.end();
+    return;
+  }
 
-  const options = {
-    hostname: targetHost,
-    port: 443,
-    path: targetPath,
-    method: req.method,
-    headers: headers
-  };
+  // 2. Proxy para /api hacia api-emitta.nexorf.dev (sin encabezados origin/referer)
+  if (req.url.startsWith('/api')) {
+    const targetHost = 'api-emitta.nexorf.dev';
+    const headers = { ...req.headers };
+    headers['host'] = targetHost;
+    delete headers['origin'];
+    delete headers['referer'];
 
-  const proxyReq = https.request(options, (proxyRes) => {
-    // Permitir CORS al cliente si fuera necesario
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', '*');
+    const proxyReq = https.request({
+      hostname: targetHost,
+      port: 443,
+      path: req.url,
+      method: req.method,
+      headers: headers
+    }, (proxyRes) => {
+      const responseHeaders = { ...proxyRes.headers };
+      responseHeaders['access-control-allow-origin'] = '*';
+      responseHeaders['access-control-allow-methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+      responseHeaders['access-control-allow-headers'] = '*';
+      res.writeHead(proxyRes.statusCode, responseHeaders);
+      proxyRes.pipe(res);
+    });
 
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
-    proxyRes.pipe(res, { end: true });
-  });
+    proxyReq.on('error', (err) => {
+      console.error('Proxy error:', err.message);
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Proxy error', details: err.message }));
+      }
+    });
 
-  proxyReq.on('error', (err) => {
-    console.error('Proxy error:', err.message);
-    if (!res.headersSent) {
-      res.status(502).json({ error: 'Error comunicando con API Emitta', details: err.message });
+    req.pipe(proxyReq);
+    return;
+  }
+
+  // 3. Servir archivos estáticos de Angular
+  const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  let filePath = path.join(DIST, decodeURIComponent(parsedUrl.pathname));
+
+  fs.stat(filePath, (err, stats) => {
+    if (!err && stats.isFile()) {
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': contentType });
+      fs.createReadStream(filePath).pipe(res);
+    } else {
+      // 4. Fallback SPA: responder index.html para rutas Angular (/pos, /documentos, etc.)
+      const indexPath = path.join(DIST, 'index.html');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=UTF-8' });
+      fs.createReadStream(indexPath).pipe(res);
     }
   });
-
-  req.pipe(proxyReq, { end: true });
 });
 
-// Servir estáticos de Angular
-app.use(express.static(distPath));
-
-// Cualquier otra ruta SPA responde index.html
-app.get(/.*/, (req, res) => {
-  res.sendFile(path.join(distPath, 'index.html'));
-});
-
-app.listen(PORT, () => {
-  console.log(`Servidor POS Emitta corriendo en puerto ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`POS Emitta Server corriendo en puerto ${PORT}`);
 });
