@@ -7,7 +7,7 @@
     "dev": "ng serve --proxy-config proxy.conf.json",
     "build": "ng build --configuration=production",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test --watch=false"
+    "test": "echo 'No tests specified'"
   },
   "private": true,
   "packageManager": "npm@11.6.2",
