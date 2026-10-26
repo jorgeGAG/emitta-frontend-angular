@@ -11,7 +11,7 @@
  */
 export const API_CONFIG = {
   // Usa el proxy de Angular hacia https://api-emitta.nexorf.dev
-  baseUrl: '/api/v1',
+  baseUrl: 'https://api-emitta.nexorf.dev/api/v1',
 
   // Credenciales de la aplicación cliente (Machine-to-Machine OAuth2)
   clientId: 'emitta_0f0b2e0c-b6e3-4212-835b-0f7086d32aaa',
